@@ -11,9 +11,19 @@ use mio::*;
 use std::net::SocketAddr;
 use mio::tcp::*;
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::fmt;
 
 
 const SERVER_TOKEN: Token = Token(0);
+
+#[derive(PartialEq)]
+enum ClientState {
+    AwaitingHandshake,
+    HandshakeResponse,
+    Connected,
+}
 
 fn gen_key(key: &String) -> String {
     let mut m = sha1::Sha1::new();
@@ -56,6 +66,9 @@ impl ParserHandler for HttpParser {
 struct WebSocketClient {
     socket: TcpStream,
     http_parser: Parser<HttpParser>,
+    headers: Rc<RefCell<HashMap<String, String>>>,
+    interest: EventSet,
+    state: ClientState,
 }
 
 
@@ -79,6 +92,10 @@ impl WebSocketClient {
                 Ok(Some(len)) => {
                     self.http_parser.parse(&buf[0..len]);
                     if self.http_parser.is_upgrade() {
+                        self.state = ClientState::HandshakeResponse;
+                        self.interest.remove(EventSet::readable());
+                        self.interest.insert(EventSet::writable());
+
                         break;
                     }
                 }
@@ -86,10 +103,31 @@ impl WebSocketClient {
         }
     }
 
+    fn write(&mut self) {
+        let headers = self.headers.borrow();
+        let response_key = gen_key(&headers.get("Sec-WebSocket-Key").unwrap());
+        let response = fmt::format(format_args!("HTTP/1.1 101 Switching Protocols\r\n\
+                                                 Connection: Upgrade\r\n\
+                                                 Sec-WebSocket-Accept: {}\r\n\
+                                                 Upgrade: websocket\r\n\r\n", response_key));
+        self.socket.try_write(response.as_bytes()).unwrap();
+        self.state = ClientState::Connected;
+        self.interest.remove(EventSet::writable());
+        self.interest.insert(EventSet::readable());
+
+    }
+
     fn new(socket: TcpStream) -> WebSocketClient {
+        let headers = Rc::new(RefCell::new(HashMap::new()));
         WebSocketClient {
             socket: socket,
-            http_parser: Parser::request(HttpParser),
+            interest: EventSet::readable(),
+            state: ClientState::AwaitingHandshake,
+            headers: headers.clone(),
+            http_parser: Parser::request(HttpParser {
+                current_key: None,
+                headers: headers.clone(),
+            }),
         }
     }
 }
@@ -98,38 +136,53 @@ impl Handler for WebSocketServer {
     type Timeout = usize;
     type Message = ();
 
-    fn ready(&mut self, event_loop: &mut EventLoop<WebSocketServer>, token: Token, _: EventSet) {
-        match token {
-            SERVER_TOKEN => {
-                let client_socket = match self.socket.accept() {
-                    Err(e) => {
-                        println!("Accept error: {}", e);
-                        return;
-                    }
-                    Ok(None) => unreachable!("Accept has returned 'None'"),
-                    Ok(Some((sock, _))) => sock,
-                };
+    fn ready(&mut self,
+             event_loop: &mut EventLoop<WebSocketServer>,
+             token: Token,
+             events: EventSet) {
+        if events.is_readable() {
+            match token {
+                SERVER_TOKEN => {
+                    let client_socket = match self.socket.accept() {
+                        Err(e) => {
+                            println!("Accept error: {}", e);
+                            return;
+                        }
+                        Ok(None) => unreachable!("Accept has returned 'None'"),
+                        Ok(Some((sock, _))) => sock,
+                    };
 
-                self.token_counter += 1;
-                let new_token = Token(self.token_counter);
+                    self.token_counter += 1;
+                    let new_token = Token(self.token_counter);
 
-                self.clients.insert(new_token, WebSocketClient::new(client_socket));
+                    self.clients.insert(new_token, WebSocketClient::new(client_socket));
 
-                event_loop.register(&self.clients[&new_token].socket,
-                              new_token,
-                              EventSet::readable(),
-                              PollOpt::edge() | PollOpt::oneshot())
-                    .unwrap();
+                    event_loop.register(&self.clients[&new_token].socket,
+                                  new_token,
+                                  EventSet::readable(),
+                                  PollOpt::edge() | PollOpt::oneshot())
+                        .unwrap();
+                }
+                token => {
+                    let mut client = self.clients.get_mut(&token).unwrap();
+                    client.read();
+                    event_loop.reregister(&client.socket,
+                                    token,
+                                    client.interest,
+                                    PollOpt::edge() | PollOpt::oneshot())
+                        .unwrap();
+                }
             }
-            token => {
-                let mut client = self.clients.get_mut(&token).unwrap();
-                client.read();
-                event_loop.reregister(&client.socket,
-                                token,
-                                EventSet::readable(),
-                                PollOpt::edge() | PollOpt::oneshot())
-                    .unwrap();
-            }
+        }
+
+        if events.is_writable() {
+            let mut client = self.clients.get_mut(&token).unwrap();
+            client.write();
+            event_loop.reregister(&client.socket,
+                            token,
+                            client.interest,
+                            PollOpt::edge() | PollOpt::oneshot())
+                .unwrap();
         }
     }
 }
