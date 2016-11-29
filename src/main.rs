@@ -28,12 +28,9 @@ enum ClientState {
 fn gen_key(key: &String) -> String {
     let mut m = sha1::Sha1::new();
     let mut buf = [0u8; 20];
-
     m.update(key.as_bytes());
     m.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11".as_bytes());
-
     m.output(&mut buf);
-
     return buf.to_base64(STANDARD);
 }
 
@@ -62,7 +59,6 @@ impl ParserHandler for HttpParser {
     }
 }
 
-
 struct WebSocketClient {
     socket: TcpStream,
     http_parser: Parser<HttpParser>,
@@ -71,13 +67,11 @@ struct WebSocketClient {
     state: ClientState,
 }
 
-
 struct WebSocketServer {
     socket: TcpListener,
     clients: HashMap<Token, WebSocketClient>,
     token_counter: usize,
 }
-
 
 impl WebSocketClient {
     fn read(&mut self) {
@@ -95,7 +89,6 @@ impl WebSocketClient {
                         self.state = ClientState::HandshakeResponse;
                         self.interest.remove(EventSet::readable());
                         self.interest.insert(EventSet::writable());
-
                         break;
                     }
                 }
@@ -114,7 +107,6 @@ impl WebSocketClient {
         self.state = ClientState::Connected;
         self.interest.remove(EventSet::writable());
         self.interest.insert(EventSet::readable());
-
     }
 
     fn new(socket: TcpStream) -> WebSocketClient {
@@ -151,12 +143,9 @@ impl Handler for WebSocketServer {
                         Ok(None) => unreachable!("Accept has returned 'None'"),
                         Ok(Some((sock, _))) => sock,
                     };
-
                     self.token_counter += 1;
                     let new_token = Token(self.token_counter);
-
                     self.clients.insert(new_token, WebSocketClient::new(client_socket));
-
                     event_loop.register(&self.clients[&new_token].socket,
                                   new_token,
                                   EventSet::readable(),
