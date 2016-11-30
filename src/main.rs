@@ -2,11 +2,12 @@ extern crate mio;
 extern crate http_muncher;
 extern crate sha1;
 extern crate rustc_serialize;
+extern crate byteorder;
+
+mod frame;
 
 use rustc_serialize::base64::{ToBase64, STANDARD};
-
 use http_muncher::{Parser, ParserHandler};
-
 use mio::*;
 use std::net::SocketAddr;
 use mio::tcp::*;
@@ -18,7 +19,7 @@ use std::fmt;
 
 const SERVER_TOKEN: Token = Token(0);
 
-#[derive(PartialEq)]
+
 enum ClientState {
     AwaitingHandshake(RefCell<Parser<HttpParser>>),
     HandshakeResponse,
@@ -82,12 +83,12 @@ impl WebSocketClient {
                     return;
                 }
                 Ok(None) => break,
-                Ok(Some(len)) => {
+                Ok(Some(_)) => {
                     let is_upgrade = if let ClientState::AwaitingHandshake(ref parser_state) =
                         self.state {
-                            let mut parser = parser_state.borrow_mut();
-                            parser.parse(&buf);
-                            parser.is_upgrade()
+                        let mut parser = parser_state.borrow_mut();
+                        parser.parse(&buf);
+                        parser.is_upgrade()
                     } else {
                         false
                     };
@@ -107,7 +108,14 @@ impl WebSocketClient {
             ClientState::AwaitingHandshake(_) => {
                 self.read_handshake();
             }
-            _ => {}
+            ClientState::Connected => {
+                let frame = frame::WebSocketFrame::read(&mut self.socket);
+                match frame {
+                    Ok(frame) => println!("{:?}", frame),
+                    Err(e) => println!("error while reading frame: {}", e),
+                }
+            }
+            ClientState::HandshakeResponse => {}
         }
     }
 

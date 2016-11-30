@@ -1,13 +1,13 @@
-use std::io;
-use std::io::Read;
-use std::error::Error;
+use std::{io, iter, u16};
+use std::io::{Read, ErrorKind};
+
 
 use byteorder::{ReadBytesExt, BigEndian};
 
 const PAYLOAD_LEN_U16: u8 = 126;
 const PAYLOAD_LEN_U64: u8 = 127;
 
-#[derive(Debug, Clone, Copy, PartualEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
 pub enum OpCode {
     TextFrame = 1,
@@ -30,6 +30,7 @@ impl OpCode {
     }
 }
 
+#[derive(Debug)]
 pub struct WebSocketFrameHeader {
     fin: bool,
     rsv1: bool,
@@ -37,9 +38,10 @@ pub struct WebSocketFrameHeader {
     rsv3: bool,
     masked: bool,
     opcode: OpCode,
-    payload_lenght: u8,
+    payload_length: u8,
 }
 
+#[derive(Debug)]
 pub struct WebSocketFrame {
     header: WebSocketFrameHeader,
     mask: Option<[u8; 4]>,
@@ -49,7 +51,7 @@ pub struct WebSocketFrame {
 impl WebSocketFrame {
     pub fn read<R: Read>(input: &mut R) -> io::Result<WebSocketFrame> {
         let buf = try!(input.read_u16::<BigEndian>());
-        let header = Self::parse_header(buf);
+        let header = try!(Self::parse_header(buf).map_err(|s| io::Error::new(ErrorKind::Other, s)));
 
         let len = try!(Self::read_length(header.payload_length, input));
         let mask_key = if header.masked {
@@ -61,8 +63,8 @@ impl WebSocketFrame {
         let mut payload = try!(Self::read_payload(len, input));
         if let Some(mask) = mask_key {
             Self::apply_mask(mask, &mut payload);
-        }
-        OK(WebSocketFrame {
+        };
+        Ok(WebSocketFrame {
             header: header,
             payload: payload,
             mask: mask_key,
@@ -80,7 +82,7 @@ impl WebSocketFrame {
         if let Some(opcode) = opcode {
             Ok(WebSocketFrameHeader {
                 fin: (buf >> 8) & 0x80 == 0x80,
-                rsv1: (buf >> 89) & 0x40 == 0x40,
+                rsv1: (buf >> 8) & 0x40 == 0x40,
                 rsv2: (buf >> 8) & 0x20 == 0x20,
                 rsv3: (buf >> 8) & 0x10 == 0x10,
                 opcode: opcode,
