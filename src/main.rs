@@ -20,7 +20,7 @@ const SERVER_TOKEN: Token = Token(0);
 
 #[derive(PartialEq)]
 enum ClientState {
-    AwaitingHandshake,
+    AwaitingHandshake(RefCell<Parser<HttpParser>>),
     HandshakeResponse,
     Connected,
 }
@@ -61,7 +61,6 @@ impl ParserHandler for HttpParser {
 
 struct WebSocketClient {
     socket: TcpStream,
-    http_parser: Parser<HttpParser>,
     headers: Rc<RefCell<HashMap<String, String>>>,
     interest: EventSet,
     state: ClientState,
@@ -74,7 +73,7 @@ struct WebSocketServer {
 }
 
 impl WebSocketClient {
-    fn read(&mut self) {
+    fn read_handshake(&mut self) {
         loop {
             let mut buf = [0; 2048];
             match self.socket.try_read(&mut buf) {
@@ -84,8 +83,15 @@ impl WebSocketClient {
                 }
                 Ok(None) => break,
                 Ok(Some(len)) => {
-                    self.http_parser.parse(&buf[0..len]);
-                    if self.http_parser.is_upgrade() {
+                    let is_upgrade = if let ClientState::AwaitingHandshake(ref parser_state) =
+                        self.state {
+                            let mut parser = parser_state.borrow_mut();
+                            parser.parse(&buf);
+                            parser.is_upgrade()
+                    } else {
+                        false
+                    };
+                    if is_upgrade {
                         self.state = ClientState::HandshakeResponse;
                         self.interest.remove(EventSet::readable());
                         self.interest.insert(EventSet::writable());
@@ -96,13 +102,23 @@ impl WebSocketClient {
         }
     }
 
+    fn read(&mut self) {
+        match self.state {
+            ClientState::AwaitingHandshake(_) => {
+                self.read_handshake();
+            }
+            _ => {}
+        }
+    }
+
     fn write(&mut self) {
         let headers = self.headers.borrow();
         let response_key = gen_key(&headers.get("Sec-WebSocket-Key").unwrap());
         let response = fmt::format(format_args!("HTTP/1.1 101 Switching Protocols\r\n\
                                                  Connection: Upgrade\r\n\
                                                  Sec-WebSocket-Accept: {}\r\n\
-                                                 Upgrade: websocket\r\n\r\n", response_key));
+                                                 Upgrade: websocket\r\n\r\n",
+                                                response_key));
         self.socket.try_write(response.as_bytes()).unwrap();
         self.state = ClientState::Connected;
         self.interest.remove(EventSet::writable());
@@ -113,13 +129,12 @@ impl WebSocketClient {
         let headers = Rc::new(RefCell::new(HashMap::new()));
         WebSocketClient {
             socket: socket,
-            interest: EventSet::readable(),
-            state: ClientState::AwaitingHandshake,
             headers: headers.clone(),
-            http_parser: Parser::request(HttpParser {
+            interest: EventSet::readable(),
+            state: ClientState::AwaitingHandshake(RefCell::new(Parser::request(HttpParser {
                 current_key: None,
                 headers: headers.clone(),
-            }),
+            }))),
         }
     }
 }
