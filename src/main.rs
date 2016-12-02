@@ -22,7 +22,6 @@ use std::fmt;
 const SERVER_TOKEN: Token = Token(0);
 const WEBSOCKET_KEY: &'static [u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-
 enum ClientState {
     AwaitingHandshake(RefCell<Parser<HttpParser>>),
     HandshakeResponse,
@@ -256,8 +255,10 @@ impl Handler for WebSocketServer {
 
         if events.is_hup() {
             let client = self.clients.remove(&token).unwrap();
-            client.socket.shutdown(Shutdown::Both);
-            event_loop.deregister(&client.socket);
+            client.socket.shutdown(Shutdown::Both).unwrap();
+            event_loop.deregister(&client.socket).unwrap();
+
+            println!("closing connection ...");
         }
     }
 }

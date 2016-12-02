@@ -16,7 +16,7 @@ pub enum OpCode {
     Pong = 0xA,
 }
 
-impl OpCode{
+impl OpCode {
     fn from(op: u8) -> Option<OpCode> {
         match op {
             1 => Some(OpCode::TextFrame),
@@ -103,7 +103,7 @@ impl WebSocketFrame {
             mask: mask_key,
         })
     }
-    
+
     pub fn get_opcode(&self) -> OpCode {
         self.header.opcode.clone()
     }
@@ -113,7 +113,7 @@ impl WebSocketFrame {
         WebSocketFrame {
             header: WebSocketFrameHeader::new_header(payload.len(), OpCode::Pong),
             payload: payload,
-            mask: None
+            mask: None,
         }
     }
 
@@ -121,7 +121,7 @@ impl WebSocketFrame {
         let body = if recv_frame.payload.len() > 0 {
             let status_code = &recv_frame.payload[0..2];
             let mut body = Vec::with_capacity(2);
-            body.write(status_code);
+            body.write(status_code).unwrap();
             body
         } else {
             Vec::new()
@@ -129,14 +129,14 @@ impl WebSocketFrame {
         WebSocketFrame {
             header: WebSocketFrameHeader::new_header(body.len(), OpCode::ConnectionClose),
             payload: body,
-            mask: None
+            mask: None,
         }
     }
 
     pub fn is_close(&self) -> bool {
         self.header.opcode == OpCode::ConnectionClose
     }
-    
+
     fn parse_header(buf: u16) -> Result<WebSocketFrameHeader, String> {
         let opcode_num = ((buf >> 8) as u8) & 0x0F;
         let opcode = OpCode::from(opcode_num);
