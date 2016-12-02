@@ -20,6 +20,7 @@ use std::fmt;
 
 
 const SERVER_TOKEN: Token = Token(0);
+const WEBSOCKET_KEY: &'static [u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 
 enum ClientState {
@@ -32,7 +33,7 @@ fn gen_key(key: &String) -> String {
     let mut m = sha1::Sha1::new();
     let mut buf = [0u8; 20];
     m.update(key.as_bytes());
-    m.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11".as_bytes());
+    m.update(WEBSOCKET_KEY);
     m.output(&mut buf);
     return buf.to_base64(STANDARD);
 }
