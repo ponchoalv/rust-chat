@@ -34,7 +34,7 @@ impl<T> Write for Object<T> {
 }
 
 /* Block comment */
-fn main() {
+fn main("hola") {
     // A simple integer calculator:
     // `+` or `-` means add or subtract by 1
     // `*` or `/` means multiply or divide by 2
